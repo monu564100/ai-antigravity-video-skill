@@ -13,14 +13,29 @@ ENV/
 node_modules/
 npm-debug.log*
 
+# Environment & Secrets
+.env
+.env.*
+*.env
+
 # OS & Editor
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 
-# Large render outputs & temp files
+# Large render outputs & audio data
+renders/
 *.mp4
 *.mov
 *.wav
+data/*.wav
 *.part
+*.tmp
+fs-sheet-*
+review/frames/
+
+# Large archives (fetch via scripts/fetch_assets.sh instead)
+*.zip
+*.tar.gz
+*.7z

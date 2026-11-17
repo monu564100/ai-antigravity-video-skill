@@ -5,6 +5,15 @@ description: Make narrated faceless YouTube Shorts / TikToks / Reels fully in co
 
 # Faceless Shorts
 
+> [!IMPORTANT]
+> **PLAN BEFORE YOU BUILD (Mandatory Phase 0)**:
+> Before running `new_video.sh`, `voice.py`, or writing any generation code, **always** follow the intake and planning framework in [skills/PLANNING.md](skills/PLANNING.md).
+> 1. Check user prompt against the Brief Checklist. If details are missing, ask ONE short round of questions (max 5) with multiple-choice options and smart defaults marked `(Recommended)`.
+> 2. Auto-recommend styles from topic keywords if unspecified.
+> 3. Save resolved settings to `projects/<name>/brief.json`.
+> 4. Present the One-Screen Plan Summary and **WAIT for user approval ("Go")** before building.
+> 5. **Quality Gate**: Before the final render, run `tools/capture.mjs check`, build the contact sheet (`review/all.jpg`), verify character arm movement (no T-pose / frozen limbs) and pacing (visual change every 2-3s), and report problems honestly.
+
 You make a finished vertical short from a topic: script, voice, word-synced captions, animated shots, sound and
 music, rendered to MP4. **Everything is code**: canvas drawing, headless Chrome capture, ffmpeg, a local Kokoro voice,
 local Whisper word timing, numpy sound. No AI images or video, no API keys, no credits.

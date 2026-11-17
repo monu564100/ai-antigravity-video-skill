@@ -9,6 +9,10 @@ import { camera } from './core/engine.js';
 import * as WD from './core/world.js';
 import * as PR from './core/props.js';
 import { Toon, PROPS } from './core/toon.js';
+import { createCharacter, reach, retargetClip } from './core/character.js';
+import { createPuppet } from './core/puppet.js';
+
+export { createCharacter, reach, retargetClip, createPuppet };
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const mix = (a, b, k) => a.clone().lerp(b, k);
@@ -29,7 +33,14 @@ const LOOK = {
 const person = (k, opts) => new Toon({ ...LOOK[k], extra: [...(LOOK[k].extra || [])] }, opts);
 
 export function buildShots(E) {
-  const S = [], CUES = [], add = (o) => (S.push(o), o), cue = (t, type, o = {}) => CUES.push({ t: +t.toFixed(3), type, ...o });
+  const S = [], CUES = [], add = (o) => (S.push(o), o);
+  const cue = (t, typeOrFn, o = {}) => {
+    if (typeof typeOrFn === 'function') {
+      typeOrFn(t);
+      return;
+    }
+    CUES.push({ t: +t.toFixed(3), type: typeOrFn, ...o });
+  };
   const cut = (i) => (i === 0 ? 0 : L(i) - 0.06);
   const cam = camera(36);
   const LOOKS = { street: { bloom: 0.15, aperture: 0.0012, maxblur: 0.008 }, room: { bloom: 0.3, aperture: 0.001, maxblur: 0.008 }, field: { bloom: 0.25, aperture: 0.001, maxblur: 0.007 } };

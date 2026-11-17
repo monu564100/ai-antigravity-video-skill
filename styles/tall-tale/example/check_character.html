@@ -1,0 +1,227 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Character Bones & Animation Selftest</title>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three.module.js",
+        "three/addons/": "./vendor/addons/"
+      }
+    }
+  </script>
+  <style>
+    body { margin: 0; background: #1a1a1a; color: #eee; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; }
+    #cv { display: block; width: 360px; height: 640px; margin: 20px auto; background: #000; border: 2px solid #444; }
+    #status { font-size: 18px; margin: 10px; }
+  </style>
+</head>
+<body>
+  <div id="status">Running Character Selftest...</div>
+  <canvas id="cv" width="540" height="960"></canvas>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { createCharacter } from './src/core/character.js';
+    import { createPuppet } from './src/core/puppet.js';
+
+    const canvas = document.getElementById('cv');
+    const statusEl = document.getElementById('status');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+    renderer.setSize(540, 960, false);
+    renderer.toneMapping = THREE.NeutralToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    renderer.shadowMap.enabled = true;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#1E202B');
+
+    const hemi = new THREE.HemisphereLight('#FFF5E6', '#2A3040', 1.2);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight('#FFF0DD', 2.5);
+    dir.position.set(3, 5, 4);
+    dir.castShadow = true;
+    scene.add(dir);
+
+    // Floor
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(10, 10),
+      new THREE.MeshStandardMaterial({ color: '#2B3045', roughness: 0.8 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    const camera = new THREE.PerspectiveCamera(35, 540 / 960, 0.1, 100);
+    camera.position.set(0, 1.3, 3.8);
+    camera.lookAt(0, 0.9, 0);
+
+    const results = {
+      characters: [],
+      allArmBonesMoved: true,
+      frames: [],
+    };
+
+    function getArmBones(char) {
+      const armBones = [];
+      const rCandidates = ['wrist.r', 'hand.r', 'lowerarm.r', 'upperarm.r', 'wristR', 'elbowR', 'shoulderR', 'arm-right', 'arm_right'];
+      const lCandidates = ['wrist.l', 'hand.l', 'lowerarm.l', 'upperarm.l', 'wristL', 'elbowL', 'shoulderL', 'arm-left', 'arm_left'];
+      for (const name of rCandidates) {
+        const b = char.findBone(name);
+        if (b) { armBones.push({ side: 'right', name, bone: b }); break; }
+      }
+      for (const name of lCandidates) {
+        const b = char.findBone(name);
+        if (b) { armBones.push({ side: 'left', name, bone: b }); break; }
+      }
+      return armBones;
+    }
+
+    async function run() {
+      try {
+        const tests = [
+          {
+            name: 'KayKit Knight (SkinnedMesh)',
+            type: 'gltf',
+            url: 'assets/characters/kaykit_knight.glb',
+            scale: 1.0,
+            testClips: ['Walking_A', 'Cheer', 'Interact']
+          },
+          {
+            name: 'Kenney Character (Node Rig)',
+            type: 'gltf',
+            url: 'assets/characters/kenney_character.glb',
+            scale: 1.0,
+            testClips: ['idle', 'jump']
+          },
+          {
+            name: 'Fallback Puppet Rig (Procedural Object3D)',
+            type: 'puppet',
+            scale: 1.0,
+            testClips: ['walk', 'wave', 'point', 'celebrate']
+          }
+        ];
+
+        for (const test of tests) {
+          statusEl.textContent = `Testing ${test.name}...`;
+          let char;
+          if (test.type === 'gltf') {
+            char = await createCharacter(test.url, { scale: test.scale });
+          } else {
+            char = createPuppet({ scale: test.scale });
+          }
+
+          scene.add(char.group);
+
+          const boneNames = [];
+          char.bones.forEach((b, k) => {
+            if (typeof k === 'string' && !boneNames.includes(k)) boneNames.push(k);
+          });
+
+          const clipNames = char.clips ? char.clips.map(c => c.name) : test.testClips;
+          const armBones = getArmBones(char);
+          const trackedNames = armBones.map(a => `${a.side}:${a.name}`).join(', ');
+
+          const charRecord = {
+            name: test.name,
+            boneCount: boneNames.length,
+            bones: boneNames,
+            clipCount: clipNames.length,
+            clips: clipNames,
+            armBone: trackedNames || 'none',
+            testedClips: [],
+            armsMoved: true,
+          };
+
+          if (armBones.length === 0) {
+            charRecord.armsMoved = false;
+            results.allArmBonesMoved = false;
+          }
+
+          // Test clips at 3 time points
+          for (const clipName of test.testClips) {
+            char.scheduled = [];
+            char.play(clipName, { from: 0, loop: true, speed: 1.0 });
+
+            const armHistories = armBones.map(() => []);
+            const timePoints = [0.2, 0.6, 1.0];
+
+            for (let i = 0; i < timePoints.length; i++) {
+              const t = timePoints[i];
+              char.setTime(t);
+              renderer.render(scene, camera);
+
+              // Record bone world positions
+              for (let bIdx = 0; bIdx < armBones.length; bIdx++) {
+                const v = new THREE.Vector3();
+                armBones[bIdx].bone.getWorldPosition(v);
+                armHistories[bIdx].push(v.clone());
+              }
+
+              // Create labeled review frame
+              const cv2d = document.createElement('canvas');
+              cv2d.width = 540; cv2d.height = 960;
+              const g = cv2d.getContext('2d');
+              g.drawImage(canvas, 0, 0);
+              g.fillStyle = 'rgba(0,0,0,0.72)';
+              g.fillRect(0, 0, 540, 84);
+              g.fillStyle = '#FFD43B';
+              g.font = 'bold 24px sans-serif';
+              g.fillText(`${test.name}`, 16, 34);
+              g.fillStyle = '#FFFFFF';
+              g.font = '20px sans-serif';
+              g.fillText(`Clip: ${clipName} | t=${t.toFixed(1)}s`, 16, 66);
+
+              const dataUrl = cv2d.toDataURL('image/jpeg', 0.88);
+              results.frames.push({
+                charName: test.name,
+                clipName,
+                t,
+                dataUrl,
+              });
+            }
+
+            // Compute max delta across tracked arm bones
+            let maxDelta = 0;
+            for (let bIdx = 0; bIdx < armBones.length; bIdx++) {
+              const hist = armHistories[bIdx];
+              const d1 = hist[0].distanceTo(hist[1]);
+              const d2 = hist[1].distanceTo(hist[2]);
+              const total = d1 + d2;
+              if (total > maxDelta) maxDelta = total;
+            }
+
+            const moved = maxDelta > 0.005;
+
+            charRecord.testedClips.push({
+              clip: clipName,
+              delta: maxDelta,
+              moved,
+            });
+
+            if (!moved) {
+              charRecord.armsMoved = false;
+              results.allArmBonesMoved = false;
+            }
+          }
+
+          results.characters.push(charRecord);
+          scene.remove(char.group);
+        }
+
+        window.CHECK_RESULT = results;
+        window.CHECK_DONE = true;
+        statusEl.textContent = results.allArmBonesMoved ? 'CHECK OK' : 'CHECK FAILED';
+      } catch (err) {
+        window.CHECK_ERROR = err.message || String(err);
+        window.CHECK_DONE = true;
+        statusEl.textContent = 'ERROR: ' + window.CHECK_ERROR;
+        console.error(err);
+      }
+    }
+
+    run();
+  </script>
+</body>
+</html>

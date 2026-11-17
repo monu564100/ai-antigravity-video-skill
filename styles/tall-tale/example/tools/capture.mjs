@@ -1,5 +1,6 @@
 // Frame-exact capture through headless Chrome. No npm packages (Node 22+). Run from the project folder.
 //   node tools/capture.mjs check                         boot, list shots + captions, report errors
+//   node tools/capture.mjs check-character [sheet.jpg]   selftest 3D character rigs, bones, clips & arm movement
 //   node tools/capture.mjs cues                          write data/cues.json (the sound cues, for tools/mix.py)
 //   node tools/capture.mjs sheet review/all.jpg [step=0.5] [cols=9]   contact sheet, a frame every `step` s, time-stamped
 //   node tools/capture.mjs frames review/full "1.2,8.4"  full-size JPEGs of those times
@@ -23,13 +24,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const args = process.argv.slice(2), flags = new Set(args.filter((a) => a.startsWith('--')));
 const [mode, ...rest] = args.filter((a) => !a.startsWith('--'));
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.otf': 'font/otf',
-  '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.png': 'image/png', '.jpg': 'image/jpeg' };
+const MIME = {
+  '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json',
+  '.otf': 'font/otf', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.wav': 'audio/wav', '.mp3': 'audio/mpeg',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json',
+  '.bin': 'application/octet-stream', '.wasm': 'application/wasm'
+};
+
 function serve(port = 0) {
   return new Promise((res) => {
     const srv = http.createServer((req, r) => {
-      const u = decodeURIComponent(req.url.split('?')[0]), f = path.join(ROOT, u === '/' ? 'index.html' : u);
-      if (!f.startsWith(ROOT) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { r.writeHead(404); r.end(); return; }
+      const u = decodeURIComponent(req.url.split('?')[0]);
+      let f = path.join(ROOT, u === '/' ? 'index.html' : u);
+      if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) {
+        const clean = u.replace(/^\/+/, '');
+        const parentAsset = path.resolve(ROOT, '../../../', clean);
+        if (fs.existsSync(parentAsset) && !fs.statSync(parentAsset).isDirectory()) {
+          f = parentAsset;
+        } else {
+          r.writeHead(404); r.end(); return;
+        }
+      }
       r.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
       fs.createReadStream(f).pipe(r);
     });
@@ -37,7 +52,7 @@ function serve(port = 0) {
   });
 }
 
-async function openPage(port) {
+async function openPage(port, page = 'index.html') {
   if (!CHROME) throw new Error('Chrome not found: install Google Chrome or set CHROME=/path/to/chrome');
   const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-chrome-'));
   const chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${prof}`, '--no-first-run', '--no-default-browser-check',
@@ -45,7 +60,7 @@ async function openPage(port) {
   let dbg;
   for (let i = 0; i < 200 && !dbg; i++) { try { dbg = fs.readFileSync(path.join(prof, 'DevToolsActivePort'), 'utf8').split('\n')[0].trim(); } catch { await sleep(100); } }
   if (!dbg) throw new Error('Chrome did not start');
-  const r = await fetch(`http://127.0.0.1:${dbg}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/index.html?capture=1${process.env.QS || ''}`)}`, { method: 'PUT' });
+  const r = await fetch(`http://127.0.0.1:${dbg}/json/new?${encodeURIComponent(`http://127.0.0.1:${port}/${page}?capture=1${process.env.QS || ''}`)}`, { method: 'PUT' });
   const target = await r.json();
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
@@ -59,22 +74,86 @@ async function openPage(port) {
   const send = (method, params = {}) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params })); });
   const ev = async (expr) => { const x = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }); if (x.exceptionDetails) throw new Error(x.exceptionDetails.exception?.description || x.exceptionDetails.text); return x.result.value; };
   await send('Runtime.enable');
-  for (let i = 0; ; i++) {
-    const st = await ev('window.OP ? (OP.bootError ? "ERR:" + OP.bootError : OP.ready) : false').catch(() => false);
-    if (st === true) break;
-    if (typeof st === 'string') throw new Error('boot failed: ' + st + '\n' + logs.join('\n'));
-    if (i > 1200) throw new Error('boot timeout\n' + logs.join('\n'));
-    await sleep(100);
+
+  if (page === 'check_character.html') {
+    for (let i = 0; ; i++) {
+      const done = await ev('window.CHECK_DONE').catch(() => false);
+      if (done) break;
+      if (i > 800) throw new Error('check-character timeout\n' + logs.join('\n'));
+      await sleep(100);
+    }
+  } else {
+    for (let i = 0; ; i++) {
+      const st = await ev('window.OP ? (OP.bootError ? "ERR:" + OP.bootError : OP.ready) : false').catch(() => false);
+      if (st === true) break;
+      if (typeof st === 'string') throw new Error('boot failed: ' + st + '\n' + logs.join('\n'));
+      if (i > 1200) throw new Error('boot timeout\n' + logs.join('\n'));
+      await sleep(100);
+    }
   }
+
   const close = () => { try { ws.close(); } catch {} chrome.kill('SIGKILL'); setTimeout(() => { try { fs.rmSync(prof, { recursive: true, force: true }); } catch {} }, 300); };
   return { ev, logs, close };
 }
+
 const jpg = (d) => Buffer.from(d.slice(d.indexOf(',') + 1), 'base64');
 const FRAME = (t, q, label) => `(() => { const d = OP.frame(${t}, ${q}); ${label ? `const cv = document.getElementById('cv'), c = cv.getContext('2d'); c.setTransform(1,0,0,1,0,0); c.fillStyle = '#000'; c.fillRect(0, 0, 250, 86); c.fillStyle = '#fff'; c.font = '700 60px sans-serif'; c.textAlign = 'left'; c.textBaseline = 'alphabetic'; c.fillText('${(+t).toFixed(2)}', 14, 64); return cv.toDataURL('image/jpeg', ${q});` : 'return d;'} })()`;
 
 const srv = await serve(mode === 'preview' ? 8765 : 0), port = srv.address().port;
-if (mode === 'preview') { console.log(`open http://127.0.0.1:${port}/  (Ctrl+C to stop)`); }
-else {
+if (mode === 'preview') {
+  console.log(`open http://127.0.0.1:${port}/  (Ctrl+C to stop)`);
+} else if (mode === 'check-character') {
+  const P = await openPage(port, 'check_character.html');
+  try {
+    const err = await P.ev('window.CHECK_ERROR').catch(() => null);
+    if (err) throw new Error('Character selftest error in browser: ' + err);
+    const res = await P.ev('window.CHECK_RESULT');
+    if (!res) throw new Error('No check result returned');
+
+    console.log(`\n==================================================`);
+    console.log(`       3D CHARACTER BONES & CLIPS REPORT          `);
+    console.log(`==================================================`);
+
+    for (const c of res.characters) {
+      console.log(`\nCharacter: ${c.name}`);
+      console.log(`  Bones Count: ${c.boneCount}`);
+      console.log(`  Bones: ${c.bones.slice(0, 20).join(', ')}${c.bones.length > 20 ? ' ...' : ''}`);
+      console.log(`  Clips Count: ${c.clipCount}`);
+      console.log(`  Clips: ${c.clips.join(', ')}`);
+      console.log(`  Arm Bone Tracked: ${c.armBone}`);
+      console.log(`  Clips Tested across 3 time points (t=0.2s, 0.6s, 1.0s):`);
+      for (const tc of c.testedClips) {
+        console.log(`    - [${tc.moved ? 'OK' : 'FAIL'}] '${tc.clip}': arm delta = ${tc.delta.toFixed(4)} m (${tc.moved ? 'POSITION CHANGED' : 'STATIC'})`);
+      }
+      console.log(`  Arms moving status: ${c.armsMoved ? 'OK' : 'FAILED'}`);
+    }
+
+    const out = path.resolve(ROOT, rest[0] || 'review/character_sheet.jpg');
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-char-'));
+    let n = 0;
+    for (const frame of res.frames) {
+      fs.writeFileSync(path.join(tmp, `f${String(n++).padStart(4, '0')}.jpg`), jpg(frame.dataUrl));
+    }
+    const cols = 3;
+    const rows = Math.ceil(n / cols);
+    const r = spawnSync('ffmpeg', ['-v', 'error', '-y', '-framerate', '1', '-i', path.join(tmp, 'f%04d.jpg'),
+      '-vf', `scale=270:480,tile=${cols}x${rows}:padding=4:color=black`, '-frames:v', '1', '-q:v', '3', out]);
+    fs.rmSync(tmp, { recursive: true, force: true });
+    if (r.status) throw new Error('ffmpeg tile failed: ' + r.stderr);
+    console.log(`\nContact sheet generated: ${out} (${n} frames across 3 time points)`);
+
+    if (res.allArmBonesMoved) {
+      console.log('\nCHECK OK');
+    } else {
+      console.log('\nCHECK FAILED: Arm bones did not change position between frames');
+      process.exitCode = 1;
+    }
+  } finally {
+    P.close();
+    srv.close();
+  }
+} else {
   const P = await openPage(port);
   try {
     const dur = await P.ev('OP.duration()');
@@ -117,6 +196,6 @@ else {
       }
       ff.stdin.end(); await new Promise((r) => ff.on('close', r));
       console.log(`\r${out} (${n} frames, ${hasMix ? 'with data/mix.wav' : 'SILENT: no data/mix.wav'}, ${((Date.now() - t0) / 1000).toFixed(0)} s)`);
-    } else console.log('modes: check · cues · sheet · frames · video · preview');
+    } else console.log('modes: check · check-character · cues · sheet · frames · video · preview');
   } finally { P.close(); srv.close(); }
 }

@@ -14,6 +14,9 @@ SRC="$SKILL/styles/$STYLE/example"
 DST="$PARENT/$NAME"
 [ -e "$DST" ] && { echo "$DST already exists: pick another name" >&2; exit 2; }
 mkdir -p "$PARENT"; cp -R "$SRC" "$DST"; mkdir -p "$DST/renders" "$DST/review"
+if [ -d "$SKILL/assets" ] && [ ! -d "$DST/assets" ]; then
+  cp -R "$SKILL/assets" "$DST/assets"
+fi
 rm -f "$DST/data/narration.wav" "$DST/data/mix.wav"
 echo "$DST"
 echo "style: $STYLE. Read $SKILL/styles/$STYLE/STYLE.md, then rewrite script.json + src/shots.js"
